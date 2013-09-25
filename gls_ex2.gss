@@ -1,0 +1,72 @@
+//HW1 Problem #3 - "Wage equation" homoskedastic t-distrib, 
+//skedastic NORMAL distrib.
+new; library maxlik; gausset; cls; format 9,4;
+
+T=550; load data[T,20]= "cps78.dat"; data=data[.,11|1|8|5|3|10];
+string _max_Options = { NEWTON STEPBT};
+//we can find initial values of parameters using OLS estimation
+Y = data[.,1];
+//7 - regressors
+X = ones(T,1)~data[.,2:3]~(data[.,3]^2)~data[.,4:6];
+{init, st_err, V_hat, e_hat}=OLS(X, Y);
+init_var=meanc(e_hat^2);
+//init values for: 7 regressors, degrees of freedom, error
+init1=(init')~5~init_var;
+{par, l, g, cov, retcode} = maxlik(data, 0, &mle1, init1);
+//H0 nu = 30
+tstat=(par[8]-30)/sqrt(cov[8,8]);
+print "parameters: " par';
+print "    errors: " sqrt(diag(cov)');
+print tstat;
+print "we reject hypothesis of conditional normality";
+
+//now assume a particular skedastic function form w/ Normal Distribution
+init2=(init')~init_var~zeros(1,4);
+{par, l, g, cov, retcode} = maxlik(data, 0, &mle2, init2);
+print "parameters: " par';
+print "    errors: " sqrt(diag(cov)');
+l0 = -1*(ln(init_var)/2) - 0.5; LR = 2*T*(l-l0);
+print "LR-statistic: " LR;
+
+//Assumes a student t-distribution w/ nu = param[8], sigma_hat
+proc(1) = mle1(par, data);
+    local m, l;
+    if ((par[8]<=0) or (par[9]<=0));
+        retp(-10000);
+    else;
+        m = Y-X*par[1:7];
+        l = T*ln(gamma(0.5*(par[8]+1)))-0.5*T*ln(pi*par[8])-0.5*T*ln(par[9])
+            -T*ln(gamma(0.5*par[8]))-((par[8]+1)/2)*sumc(ln(ones(T,1)
+            +((m^2)./(par[8]*par[9]))));
+    endif;
+    retp(l);
+endp;
+
+/*
+Assumes a Normal distribution
+Skedastic Function: exp (z'g), 
+z = [education exper exper^2 union]'
+g - parameters
+*/
+proc(1) = mle2(par, data);
+    local m, var, l;
+    m = Y-X*par[1:7];
+    //specify skedastic form
+    var=exp(ones(T,1)*par[8]+data[.,2]*par[9]+data[.,3]*par[10]
+        +(data[.,3]^2)*par[11]+data[.,6]*par[12]);
+    //normal maximum-likeliihood
+    l = - 0.5*sumc(ln(var))-sumc((m^2)./(var*2));
+    retp(l);
+endp;
+
+proc(4) = OLS(X,Y);
+    local beta_hat,e_hat,V_hat,st_err,Qxx,Qxxe2;
+    Qxx=X'X./rows(X);
+    beta_hat=invpd(X'X)*X'Y;
+    e_hat=Y-X*beta_hat;
+    Qxxe2=(X.*e_hat)'(X.*e_hat)./rows(X);
+    V_hat=invpd(Qxx)*Qxxe2*invpd(Qxx);
+    st_err=sqrt(diag(V_hat))./sqrt(rows(X));
+    retp(beta_hat,st_err,V_hat,e_hat);
+endp;
+end;

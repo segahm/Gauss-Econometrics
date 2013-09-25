@@ -1,0 +1,101 @@
+new; cls;
+gausset;
+format 9,4;
+
+filename = "datastream2.xlsx";
+
+output_file = "out_data4.xlsx";
+
+range_time = 
+"H2:IZ1943"$|      //1999-2003
+"H2:FQ3052"$|            //2003-2006
+"H2:FH4767"$|            //2007-2009
+"H2:DG5305"            //2010-2011
+;
+range_indices = 
+"B2:B1943"$|      //1999-2003
+"B2:B3052"$|            //2003-2006
+"B2:B4767"$|            //2007-2009
+"B2:B5305"            //2010-2011
+;
+range_fields = 
+"E2:E1943"$|      //1999-2003
+"E2:E3052"$|            //2003-2006
+"E2:E4767"$|            //2007-2009
+"E2:E5305"            //2010-2011
+;
+
+time_start = 1;
+time_len = 253|166|157|104;
+STOCKS_N = 953;
+NUMBER_OF_FIELDS_BEFORE_TIME = 3;
+FIELD_NAME_INDEX = 1;
+FIELD_NAMES = "P"$|
+"MV"$|
+"MTBV"$|
+"NOSH"$|
+"PTBV"$|
+"RI"$|
+"VO";
+//GLOBAL_INDEX = seqa(1,1,TOTAL_COLS);
+
+vls = reshape(" ",9,1);
+prices = zeros(680,953);
+mv = zeros(680,953);
+volume = zeros(680,953);
+ret = zeros(680,953);
+P = zeros(sumc(time_len),953);
+MV = zeros(sumc(time_len),953);
+MTBV  = zeros(sumc(time_len),953);
+NOSH = zeros(sumc(time_len),953);
+PTBV = zeros(sumc(time_len),953);
+RI = zeros(sumc(time_len),953);
+VO = zeros(sumc(time_len),953);
+for i_sheet(1,4,1);
+    fields = xlsreadsa(filename, range_fields[i_sheet] , i_sheet,vls);
+    index  = xlsreadm(filename, range_indices[i_sheet] , i_sheet,0);
+    time_series   = xlsreadm(filename, range_time[i_sheet] , i_sheet,0);
+    print "parsing";
+    parse_into_fields(time_series,index,fields);
+    for field_i(1,rows(FIELD_NAMES),1);
+        print "iterating";
+        ar = varget("tmp" $+ FIELD_NAMES[field_i]);
+        ar = ar';
+        //merge
+        perm = varget(FIELD_NAMES[field_i]);
+        perm[(sumc(time_len[1:i_sheet])-time_len[i_sheet]+1):sumc(time_len[1:i_sheet]),.] = ar;
+        print "saving to " FIELD_NAMES[field_i];
+        s = varput(perm,FIELD_NAMES[field_i]);
+        print "saved: " s;
+    endfor;
+endfor;
+//write joined value
+for field_i(1,rows(FIELD_NAMES),1);
+    print "printing field: " field_i;
+    v = varget(FIELD_NAMES[field_i]);
+    print "col: " cols(v);
+    v = (seqa(1,1,STOCKS_N)')|v;
+    v = v[.,601:800];
+    r = xlsWritem(v,output_file, "A1" , field_i,0);
+    print "res: " r;
+endfor;
+
+proc(0) = parse_into_fields(weeks,index,fields);
+    local stocks,name,s;
+    for field_i(1,rows(FIELD_NAMES),1);
+        name = "tmp" $+ FIELD_NAMES[field_i];
+        stocks = zeros(STOCKS_N,cols(weeks));
+        s = varput(stocks,name);
+    endfor;
+    for row(1,rows(weeks),1);
+        for field_i(1,rows(FIELD_NAMES),1);
+            if (fields[row,FIELD_NAME_INDEX] == FIELD_NAMES[field_i]);
+                name = "tmp" $+ FIELD_NAMES[field_i];
+                stocks = varget(name);
+                stocks[index[row],.] = weeks[row,.];
+                s = varput(stocks,name);
+            endif;
+        endfor;
+    endfor;
+endp;
+end;

@@ -1,0 +1,322 @@
+new; cls;
+library optmum;
+string _max_Options = { NEWTON BRENT INFO CENTRAL };
+gausset;
+format 9,4;
+
+__con = 0;
+_fcmptol = 1000000;
+
+filename = "part2_source.xlsx";
+moment_out = "moment_out.xlsx";
+vls = reshape(" ",9,1);
+
+
+STOCKS_N = 953;
+T_PERIODS = 679;
+COMPANIES = seqa(1,1,STOCKS_N);
+
+FIELD_NAMES = 
+"P"$|
+"MV"$|
+"MTBV"$|
+"PTBV"$|
+"RI"$|
+"VO";
+P = zeros(T_PERIODS,STOCKS_N);
+MV = zeros(T_PERIODS,STOCKS_N);
+MTBV  = zeros(T_PERIODS,STOCKS_N);
+PTBV = zeros(T_PERIODS,STOCKS_N);
+RI = zeros(T_PERIODS,STOCKS_N);
+VO = zeros(T_PERIODS,STOCKS_N);
+
+alive_dead = zeros(STOCKS_N,2);
+
+for i_sheet(1,rows(FIELD_NAMES),1);
+    data  = xlsreadm(filename, "A2:AJQ680" , i_sheet,0);
+    s = varput(data,FIELD_NAMES[i_sheet]);
+    print "loaded: " FIELD_NAMES[i_sheet] " with: " s;
+endfor;
+
+
+ex_rate  = xlsreadm(filename, "B1:B680" , 7,0);
+ex_change = ln(ex_rate[2:rows(ex_rate)]./ex_rate[1:rows(ex_rate)-1]);
+ex_rate = ex_rate[2:rows(ex_rate)];
+is_usd_or_ru = xlsreadm(filename, "E2:E954" , 7,0);
+apply_exchange_rate();
+
+/******************************************************************
+***********CONSTRUCT HML AND SMB***********************************
+******************************************************************/
+
+//returns - one less than the # of observations
+/*SMB = zeros(T_PERIODS-1,1);
+HML = zeros(T_PERIODS-1,1);
+
+ind = portfolio_indexes(2);
+value_size(ind,2,52);
+//for each year determine indexes
+for start_series(53,rows(PTBV),52);
+    ind = portfolio_indexes(start_series);
+    end_series = min(start_series+51,rows(MV));
+    value_size(ind,start_series,end_series);
+endfor;
+
+r = xlsWritem(seqa(1,1,T_PERIODS-1)~HML~SMB,"out_part2.xlsx", "A2" , 1,0);
+*/
+
+data  = xlsreadm("out_part2.xlsx", "B2:C679" , 1,0);
+HML = data[.,1]; SMB = data[.,2];
+/*****************************************************************
+********************END HML AND SMB*******************************
+*****************************************************************/
+
+oil_prices = xlsreadm(filename, "B4:B682" , 8,0);
+market = xlsreadm(filename, "B1:B679" , 9,0);
+t_bill = xlsreadm(filename, "B7:E684" , 10,0);
+refinance = xlsreadm(filename, "E15:E692" , 11,0);
+
+t_bill = t_bill/100;    //convert to %
+r_f = (1+t_bill[.,3])^(1/52)-1;
+/***************************************************************
+*********************ESTIMATE MARKET****************************
+***************************************************************/
+Y = market[2:rows(market)]./market[1:(rows(market)-1)]-1;
+length = rows(Y);
+/*X = market[1:length]~oil_prices[(rows(oil_prices)-length):rows(oil_prices)-1]~ex_change[2:rows(ex_change)]
+    ~t_bill[.,1]~refinance;
+{B,st_err,R2} = ols(Y,X);
+print "Realized Market on lagged: oil, exchange rate, t_bill";
+print "B: " B';
+print "S: " st_err';
+print "T: " (B./st_err)';
+print "R2: " R2;
+data = B'|st_err'|(B./st_err)'|((rows(Y)|R2)*ones(rows(B),1)');
+
+
+r = xlsWritem(data,"out_part2.xlsx", "B3:F7" , 2,0);
+*/
+fitted_m_value = Y-r_f;//X*B-r_f;
+
+//r = xlsWritem(fitted_m_value,"out_part2.xlsx", "E2" , 1,0);
+
+RI = safe_return_division(RI);
+//r = xlsWritem(RI[.,1:200],"out_part2.xlsx", "A2:GR679" , 3,0);
+//r = xlsWritem(RI[.,201:400],"out_part2.xlsx", "A2:GR679" , 4,0);
+//r = xlsWritem(RI[.,401:600],"out_part2.xlsx", "A2:GR679" , 5,0);
+//r = xlsWritem(RI[.,601:800],"out_part2.xlsx", "A2:GR679" , 6,0);
+//r = xlsWritem(RI[.,801:cols(RI)],"out_part2.xlsx", "A2:EW679" , 7,0);
+//set_alive_dead();
+//r = xlsWritem(seqa(1,1,STOCKS_N)~alive_dead,"out_part2.xlsx", "G2" , 1,0);
+
+
+alive_dead = xlsreadm(filename, "B2:C954" , 14,0);
+
+//estimate 2-year rolling betas
+FF_factors = fitted_m_value~HML~SMB;
+gamma_weekly = zeros(rows(RI)-103,4);
+
+proc () = gmm_func(p);
+    local FF_Coef,FF_Coef_V,small_RI,indx,b;
+    FF_Coef_V = p[1:3];
+    //liquidity = liquidity[1:100,1];
+    //RI = RI[.,liquidity'];
+    b = zeros(1,3);
+    for week(366,rows(gamma_weekly),1);
+        {small_RI,indx} = ret_window(week);
+        //print "using " cols(small_RI) " stocks for week " week;
+        for i(1,cols(small_RI),1);
+            start_time = alive_dead[indx[i],1]-week+1;
+            if (start_time < 1);
+                start_time = 1;
+            endif;
+            end_time = 103;
+            period = (end_time-start_time+1);
+
+            if (period > 52);
+                //get coefficients associated with this regression
+                FF_Coef = FF_Coef_V[((i-1)*3+1):((i-1)*3+3)];
+                b = b|FF_Coef';
+                //regress on all but the last, week
+///////////////////////////////
+                m = small_RI[start_time:end_time,i] 
+                    - FF_factors[(week+start_time-1):(week+end_time-1),.])*FF_coef;
+            endif;
+        endfor;
+        b = b[2:rows(b),.];
+        indx2 = indx2[2:rows(indx2),.];
+        X2 = ones(rows(b),1)~b;
+        {b_i,st_err,R2} = ols(small_RI[104,indx2]',X2);
+        gamma_weekly[week,.] = b_i';
+    endfor;
+endp;
+print "finished estimating betas";
+t1=meanc(gamma_weekly)./stdc(gamma_weekly);
+data = meanc(gamma_weekly)~stdc(gamma_weekly)~maxc(gamma_weekly)~minc(gamma_weekly)~t1;
+r = xlsWritem(data,"out_part2.xlsx", "B10:F13" , 2,0);
+print "t: " t1';
+print "max: " maxc(gamma_weekly)';
+print "min: " minc(gamma_weekly)';
+print "average: " meanc(gamma_weekly)';
+print "stdev: " stdc(gamma_weekly)';
+
+/*
+start = rows(RI)-rows(b)+1;
+for i(1,cols(RI),1);
+        X = ones(rows(b1),1)~b1[.,i]~b2[.,i]~b3[.,i];
+        {b_i,st_i} = ols(RI[start:rows(RI),i],X);
+        print "b: " b_i';
+        print st_i';
+        print b_i/st_i;
+endfor;*/
+proc (2) = ret_window(week);
+    local indx, small_RI;
+    //was alive before the end of the period
+    indx = COMPANIES.*(alive_dead[.,1].<=(week+103)).*(alive_dead[.,1].>0);
+    //dies after the end period
+    indx = indx.*(alive_dead[.,2].>(week+102));
+    indx = rem_zeros(indx);
+    small_RI = RI[week:(week+103),indx]-r_f[week:(week+103)];
+    retp(small_RI,indx);
+endp;
+proc (0) = set_alive_dead();
+    local set_alive, set_dead;
+    for c(1,cols(RI),1);
+        set_alive = 0;
+        set_dead = 0;
+        for r(1,rows(RI),1);
+                if (RI[r,c] != 0);
+                    set_dead = 0;
+                    if (set_alive == 0);
+                        alive_dead[c,1] = r;
+                        set_alive = 1;
+                    endif;
+                else;
+                    if (set_dead == 0);
+                        set_dead = r;
+                    endif;
+                endif;
+        endfor;
+        if (set_dead != 0);
+            alive_dead[c,2] = set_dead;
+        else;
+            alive_dead[c,2] = rows(RI);
+        endif;
+    endfor;
+endp;
+/********construct portfolios*********/
+proc (0) = apply_exchange_rate();
+    local total_zeros,new_ex_rate;
+    is_usd_or_ru = is_usd_or_ru.*seqa(1,1,STOCKS_N);
+    total_zeros = STOCKS_N-sumc((is_usd_or_ru.>0));
+    is_usd_or_ru = sortc(is_usd_or_ru,1);
+    is_usd_or_ru = is_usd_or_ru[(total_zeros+1):rows(is_usd_or_ru)];
+    new_ex_rate = ex_rate*seqa(1,1,rows(is_usd_or_ru))';
+    RI[.,is_usd_or_ru'] = new_ex_rate.*RI[.,is_usd_or_ru'];
+    MV[.,is_usd_or_ru'] = new_ex_rate.*MV[.,is_usd_or_ru'];
+endp;
+proc (0) = value_size(indexes,start_series,end_series);
+    local selected_stocks, small_small,small_med,small_lg,big_small,big_med,big_lg;
+    selected_stocks = portfolio_quote(MV[start_series:end_series,indexes])
+                    ~indexes
+                    ~portfolio_quote(PTBV[start_series:end_series,indexes]);
+    selected_stocks = sortc(selected_stocks,1);
+    {small_small,small_med,small_lg} = get_value_growth(
+        selected_stocks[1:ceil(rows(selected_stocks)*0.5),2:3]);
+    {big_small,big_med,big_lg} = get_value_growth(
+        selected_stocks[(ceil(rows(selected_stocks)*0.5)+1):rows(selected_stocks),2:3]);
+    const_RI_for_HML_SMB(small_small,small_med,small_lg,
+                        big_small,big_med,big_lg,start_series,end_series);
+endp;
+proc (0) = const_RI_for_HML_SMB(small_small,small_med,small_lg,
+                                big_small,big_med,big_lg,start_series,end_series);
+    print "start";
+    print "week: " start_series " - year: " (floor(start_series/52)+1999);
+    print cols(small_small) " - " cols(small_med) " - " cols(small_lg) " - "
+        cols(big_small) " - " cols(big_med) " - " cols(big_lg);
+    small_small = weighted_portfolio(small_small,start_series,end_series);
+    small_med = weighted_portfolio(small_med,start_series,end_series);
+    small_lg = weighted_portfolio(small_lg,start_series,end_series);
+    big_small = weighted_portfolio(big_small,start_series,end_series);
+    big_med = weighted_portfolio(big_med,start_series,end_series);
+    big_lg = weighted_portfolio(big_lg,start_series,end_series);
+    HML[(start_series-1):(end_series-1)] = (small_small+big_small)/2+(small_lg+big_lg)/2;
+    SMB[(start_series-1):(end_series-1)] = (small_small+small_med+small_lg)/3
+                           -(big_small+big_med+big_lg)/3;
+endp;
+/**indeces - a row with indeces of all stocks in a portfolio*/
+proc (1) = weighted_portfolio(indeces,start_series,end_series);
+    local a_RI,a_MV,w_ret;
+    a_RI = safe_return_division(RI[(start_series-1):end_series,indeces]);
+    //a_RI = RI[(start_series-1):end_series,indeces];    //53 weeks
+    //returns for 52 weeks
+    //a_RI = a_RI[2:rows(a_RI),.]./a_RI[1:(rows(a_RI)-1),.]-1;
+    a_MV = MV[start_series:end_series,indeces];
+    w_ret = a_RI.*(a_MV/sumc(a_MV'));
+    w_ret = sumc(w_ret');
+    retp(w_ret);
+endp;
+/*carefully treats zeros in the denominator*/
+proc (1) = safe_return_division(R_);
+    R_ = R_[2:rows(R_),.]./((R_[1:(rows(R_)-1),.].==0)
+                            +R_[1:(rows(R_)-1),.])
+        -(abs(R_[1:(rows(R_)-1),.]).>0)
+        -(R_[1:(rows(R_)-1),.].==0).*R_[2:rows(R_),.];
+    retp(R_);
+endp;
+/*takes a 2-column series and returns 3 3rds based on sorted 2nd column*/
+proc (3) = get_value_growth(selected_stocks);
+    local vg_small, vg_med, vg_lg,endseries;
+    selected_stocks = sortc(selected_stocks,2);
+    endseries = ceil(rows(selected_stocks)*0.3);
+    vg_small = selected_stocks[1:endseries,1]';
+    vg_med = selected_stocks[(ceil(rows(selected_stocks)*0.3)+1):ceil(rows(selected_stocks)*0.7),1]';
+    if ((ceil(rows(selected_stocks)*0.7)+1) > rows(selected_stocks));
+        vg_lg = 0;
+    else;
+        vg_lg = selected_stocks[(ceil(rows(selected_stocks)*0.7)+1):rows(selected_stocks),1]';
+    endif;
+    retp(vg_small, vg_med, vg_lg);
+endp;
+/*takes a representative value for the start_series series (CURRENTLY: an Average)*/
+proc (1) = portfolio_quote(col);
+    retp(col[1,.]');
+endp;
+
+proc (1) = portfolio_indexes(start_series);
+    local cell, ind;
+    cell = (abs(PTBV[start_series,.]).>0)';
+    ind  = zeros(1,1);
+    for i(1,rows(cell),1);
+        if (cell[i] == 1);
+            ind = ind|i;
+        endif;
+    endfor;
+    ind = ind[2:rows(ind)];
+    retp(ind);
+endp;
+proc (1) = min(v1,v2);
+    if (v1 < v2);
+        retp(v1);
+    else;
+        retp(v2);
+    endif;
+endp;
+proc (3) = ols(Y,X);
+    local SSR, SST, B,st_err,e,_Qxx,Qexx;
+    _Qxx = inv(X'X);
+    B = _Qxx*X'*Y;
+    e = Y-X*B;
+    Qexx = (X.*e)'(X.*e);
+    st_err = sqrt(diag(_Qxx*Qexx*_Qxx));
+    SST = sumc((Y-meanc(Y)).^2);
+    SSR = sumc(e.^2);
+    retp (B,st_err,(1-SSR/SST));
+endp;
+proc (1) = rem_zeros(A);
+    local zer;
+    A = sortc(A,1);
+    zer = rows(A)-sumc((A.>0));
+    retp(A[(zer+1):rows(A)]);
+endp;
+end;

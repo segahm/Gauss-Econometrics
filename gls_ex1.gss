@@ -1,0 +1,54 @@
+//HW2 Problem #3 - "Euler equation and maximum likelihood" - under constraints (Delta Method)
+new; 
+gausset;
+format 9,3; cls;
+library maxlik; 
+
+string _max_Options = { NEWTON BRENT INFO CENTRAL };
+
+_max_MaxIters = 50;
+load data[] = "HHOdata.dat";
+T = rows(data)/2; //determine the # of rows
+data = reshape(data,T,2); //T rows, 2 cols
+
+//Reason for choosing: suggested! (i.e. these produce convergence)
+/*
+1) lambda1
+2) lambda2
+3) phi11
+4) phi21
+5) phi12
+6) sigma11
+7) sigma22
+8) sigma12
+*/
+init = 0.001~0.02~0.12~0.014~0~0.00005~.005~0.0001;
+{param, f, g, cov, retcode} = maxlik(data, 0, &mml, init);
+alpha = - param[3]/param[4];
+phi22 = param[4]*param[5]/param[3];
+beta = exp(-param[1]-alpha*param[2]-(param[6]+alpha^2*param[7])/2-alpha*param[8]);
+//get estimates for phi22,alpha, and beta
+//Delta Method - take 8x1 matrix of parameters => 3:1. G = 3x8
+G = ((0|0|-phi22/param[3]|phi22/param[4]|phi22/param[5]|0|0|0)
+        ~ (0|0|-1/param[4]|-alpha/param[4]|0|0|0|0)
+        ~ beta*(-1|-alpha|param[2]/param[4]-alpha^2/param[3]*param[7]+param[8]/param[4]|alpha/param[4]*param[2]+alpha^2/param[4]*param[7]+alpha/param[4]*param[8]|0|-1/2|-alpha^2/2|-alpha))';
+param = param | phi22 | alpha | beta;
+st_err = (diag(cov)|diag(G*cov*G'))^0.5;
+print "Estimates: " param';
+print "St. Errors: " st_err';
+
+proc (1) = mml(p,X);
+    local l,e_hat,S_,Vu,Vu_;
+    Vu = p[6]*p[7]-p[8]^2; l = -((T-1)/2)*ln(Vu);
+    Vu_ = inv((p[6]~p[8])|(p[8]~p[7]));
+    //Xt-E[Xt]
+    e_hat = X[2:T,.]-ones(T-1,1)*(p[1]~p[2])-X[1:T-1,.]*((p[3]~p[5])|(p[4]~(p[4]*p[5]/p[3])))';
+    //check Vu
+    if ( Vu > 0 );
+        l = l - 0.5*sumc(sumc((e_hat*Vu_).*e_hat));
+    else;
+        retp(-1000000000000);
+    endif;
+    retp (l);
+endp;
+end;

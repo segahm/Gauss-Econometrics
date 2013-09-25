@@ -1,0 +1,51 @@
+new;cls;
+library optmum;
+format 7,5;
+
+N = 172;
+load data[N,9]= "habit.dat";
+
+dc = data[.,6];
+dcp = data[.,3]./data[.,2];
+r = data[.,5];
+
+Z = ones(N,1)~data[.,6]~data[.,7]~data[.,8]~data[.,9];
+
+W = eye(5);
+start = { .5, 2., 0.5 };
+{ p, l, g, retcode } = optmum( &fun, start );
+
+W = invpd(V_HAC(Z.*fv(p)));
+{ p, l, g, retcode } = optmum( &fun, p );
+u = fv(p);
+du = gradp(&fv,p);
+W = invpd(V_HAC(Z.*u));
+
+st_err = sqrt(diag(invpd(du'Z*W*Z'du)));
+J = u'Z*W*Z'u;
+
+print p;
+
+print 15~p'~st_err'~J;
+
+proc fun(p);
+   retp (fv(p)'Z*W*Z'fv(p)/ N^2);
+endp;
+
+proc fv(p);
+   retp(   (p[2] * r. * ((p[3] + dcp)^(-p[1]) + p[2] * p[3] * ((p[3] + dC2)^(-p[1])).* (dcp^(-p[1]))) ./
+   (1+p[3]*dc^(-1))^(-p[1]) -p[2] * p[3] * ((p[3]+dcp)^(-p[1]))./(1+p[3] * dc^(-1))^(-p[1]) - 1) / (1 + p[2]*p[3])    );
+endp;
+
+proc(1)=V_HAC(Z);
+   local j, V, bnd, weight;
+
+   bnd=floor(4*(N/100)^(1/3))+1;
+   weight=1-seqa(1,1,bnd)/bnd;
+
+   V=Z'Z;
+   for j (1,bnd-1,1);
+       V=V+weight[j]*( Z[j+1:N,.]'Z[1:N-j,.]+Z[1:N-j,.]'Z[j+1:N,.] );
+   endfor;
+   retp(V);
+endp;
